@@ -1,0 +1,14 @@
+191a192,201
+> ## CUSTOM
+> function vcard_group {
+> 	local vcard="$1"
+> 	grep "X-ANDROID-CUSTOM:vnd.android.cursor.item/relation;" "$vcard" \
+> 	| sed 's%X-ANDROID-CUSTOM:vnd.android.cursor.item/relation;%%' \
+> 	| sed 's%;.*%%' \
+> 	| clean
+> }
+> 
+> 
+203a214,215
+> 	## CUSTOM
+> 	addattr -t string META:group   "$(vcard_group "$vcard")" "$person"

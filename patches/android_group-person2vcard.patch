@@ -1,0 +1,12 @@
+69a70,71
+> 	## CUSTOM
+> 	set_vcard_group   "$vc" "$(catattr -d META:group "$person" 2>/dev/null)"
+98a101,108
+> }
+> 
+> ## CUSTOM
+> function set_vcard_group {
+> 	local vcard="$1"
+> 	local group="$2"
+> 	simple_set_vcard "$vcard" "X-ANDROID-CUSTOM" \
+> 		"vnd.android.cursor.item/relation;${group};1;;;;;;;;;;;;;"

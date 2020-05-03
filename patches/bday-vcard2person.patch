@@ -1,0 +1,6 @@
+190a191,192
+> ## CUSTOM
+> function vcard_bday   { local vc="$1"; get_vcard_value "$vc" "BDAY"   | clean; }
+203a206,207
+> 	## CUSTOM
+> 	addattr -t string META:birthday "$(vcard_bday "$vcard")" "$person"

@@ -1,0 +1,429 @@
+#!/boot/system/bin/bash
+# --------------------------------------
+# VCARD2PERSON
+# simple script for convertining a vcard
+# into a haiku person file.
+# CC0, jadedctrl@teknik.io
+# --------------------------------------
+
+
+# VCARD INPUT
+# --------------------------------------
+# convert a given vcard file into a person file
+function vcard_to_person {
+	local vcard="$1"
+	local person="$2"
+	if test -n "$OUTPUT_PATH"; then person="$OUTPUT_PATH"; fi
+	if test -n "$OUTPUT_DIR";  then person="${OUTPUT_DIR}/${person}"; fi
+
+	make_person "$person"
+	populate_person_vcard "$person" "$vcard"
+}
+
+# sometimes vcf files contain multiple vcard definitions.
+# if so, then process each vcard individually.
+function vcf_to_persons {
+	orig_vcf="$1"
+
+	vcf="$(mktemp   -t 'v2p-XXXX')"
+	vcard="$(mktemp -t 'v2p-XXXX')"
+	cp "$orig_vcf" "$vcf"
+
+	while grep   "END:VCARD" "$vcf" > /dev/null; do
+		sed '/END:VCARD/q' "$vcf" \
+		> "$vcard"
+
+		vcard_to_person "$vcard" "$(vcard_name "$vcard"| remove_cr)"
+
+		tail -n +2 "$vcf" \
+		| sed '/BEGIN:VCARD/,$!d' \
+		> "$vcf.tmp"
+		mv "$vcf.tmp" "$vcf"
+
+
+	done
+
+	rm "$vcf" "$vcard"
+}	
+
+# get a given value from a vcard
+function get_vcard_value {
+	local file="$1"
+	local key="$2"
+
+#	local matching="$(grep "^${key}" "$file")"
+	local matching="$(grep -n "^${key}" "$file" | awk -F : '{print $1}')"
+	echo "===${matching}">>/tmp/dad
+
+	if test "$(line_length "$matching")" -gt 1; then
+		matching="$(select_match "$file" "$key" "$matching")"
+	fi
+
+	local end_line="$(next_match "$file" "$matching" '^.*[A-Z a-z "]:')"
+
+	cat "$file" \
+	| get_line "$matching" \
+	| cut --complement -d ':' -f 1
+
+	cat "$file" \
+	| line_range "$((matching + 1))" "$((end_line - 1))"
+}
+
+# print how many matches a given key has
+function vcard_match_count {
+	local file="$1"
+	local key="$2"
+	line_length "$(grep "^${key}" "$file")"
+}
+
+# select a given match; for when there are mulitple possible slots
+function select_match {
+	local file="$1"
+	local key="$2"
+	local matches="$3"
+	local match_count="$(line_length "$matches")"
+
+	echo "There are a few matching slots for ${key}." 1>&2
+	echo "Which one do you want to use?"              1>&2
+	echo "(0 for skip)"                               1>&2
+
+	local prompt="[0-${match_count}] >> "
+	select_line "$file" "$prompt" "$matches" 
+}	
+
+# return a given field-number of vcard's adr
+function vcard_adr_value {
+	local adr="$1"
+	local index="$2"
+
+	echo "$adr" \
+	| awk -v ind="$index" -F ';' '{print $ind}'
+}
+
+# get a vcard's telephone number
+function vcard_tel {
+	local file="$1"
+	get_vcard_value "$file" "TEL" \
+	| sed 's%tel:%%' \
+	| clean
+}
+
+# puts a vcard's photo to a given output, if it exists
+function vcard_photo {
+	local vcard="$1"
+	local output="$2"
+
+	local photo_value="$(get_vcard_value "$vcard" "PHOTO")"
+	if test -z "$photo_value"; then return 2; fi
+
+	if   echo "$photo_value" | grep "http://">/dev/null; then
+		vcard_photo_url "$photo_value" "$output"
+	else 
+		vcard_photo_base64 "$photo_value" "$output"; 
+	fi
+}
+
+# if vcard has a url to a photo (and it's an image), save to output file
+function vcard_photo_url {
+	local photo="$1"
+	local output="$2"
+
+	local uri="$(echo "$photo" | sed 's%.*http%http%')"
+	if echo "$uri" | grep http > /dev/null; then
+		wget --quiet -O "${output}.tmp" "$uri"
+		if file "${output}.tmp" | grep "image" > /dev/null; then
+			cat "${output}.tmp" > "$output"
+		fi
+		rm "$output.tmp"
+	fi
+}
+
+# tries to decode base64 photo from a vcard, save to an output file
+# if the GNU base64 decoder fails, tries the openssl decoder.
+# ... if *that* fails, tries the python one.
+# (can you tell I really want contact photos? lmao)
+function vcard_photo_base64 {
+	local photo="$1"
+	local output="$2"
+
+	echo "$photo" \
+	| clean \
+	| base64 -d \
+	2> /dev/null \
+	> "${output}.tmp"
+	local result="$?"
+
+	if test "$result" -ne 0; then
+		echo "$photo" \
+		| openssl enc -base64 -d \
+		2> /dev/null \
+		> "${output}.tmp"
+		result="$?"
+	fi
+
+	if test "$result" -ne 0; then
+		echo "$photo" \
+		| clean \
+		| python -m base64 -d \
+		2> /dev/null \
+		> "${output}.tmp"
+		result="$?"
+	fi
+
+	if test "$result" -eq 0; then
+		cat "${output}.tmp" > "${output}"
+	fi
+	rm "${output}.tmp"
+}
+
+# pretty self-explanatory
+function vcard_version { local v="$1"; get_vcard_value "$v" "VERSION" | clean; }
+function vcard_name   { local vc="$1"; get_vcard_value "$vc" "FN"     | clean; }
+function vcard_org    { local vc="$1"; get_vcard_value "$vc" "ORG"    | clean; }
+function vcard_url    { local vc="$1"; get_vcard_value "$vc" "URL"    | clean; }
+function vcard_email  { local vc="$1"; get_vcard_value "$vc" "EMAIL"  | clean; }
+function vcard_adr    { local vc="$1"; get_vcard_value "$vc" "ADR"    | clean; }
+function adr_address  { local adr="$1";vcard_adr_value "$adr" 3       | clean; }
+function adr_city     { local adr="$1";vcard_adr_value "$adr" 4       | clean; }
+function adr_state    { local adr="$1";vcard_adr_value "$adr" 5       | clean; }
+function adr_zip      { local adr="$1";vcard_adr_value "$adr" 6       | clean; }
+function adr_country  { local adr="$1";vcard_adr_value "$adr" 7       | clean; }
+
+
+
+# PERSON OUTPUT
+# --------------------------------------
+# populate the given person with the data of the given vcard
+function populate_person_vcard {
+	local person="$1"
+	local vcard="$2"
+
+	addattr -t string META:name    "$(vcard_name  "$vcard")" "$person"
+	addattr -t string META:company "$(vcard_org   "$vcard")" "$person"
+	addattr -t string META:email   "$(vcard_email "$vcard")" "$person"
+
+	populate_person_telephone "$person" "$vcard"
+	populate_person_address   "$person" "$vcard"
+	vcard_photo               "$vcard"  "$person"
+}
+
+# populate a person with a vcard's address data
+function populate_person_address {
+	local person="$1"
+	local vcard="$2"
+
+	local adr="$(vcard_adr "$vcard")"
+
+	# some implementations (wrongly) put all address info in the address
+	# slot, delimiting with commas and leaving other slots blank.
+	# we can try and work around that.
+	if test -n "$(adr_address "$adr")" -a -z "$(adr_city "$adr")"; then
+		if echo "$adr" | grep "," > /dev/null; then
+		   	adr="$(infer_comma_address "$adr")"
+		fi
+	fi
+			
+	addattr -t string META:address "$(adr_address "$adr")"   "$person"
+	addattr -t string META:city    "$(adr_city    "$adr")"   "$person"
+	addattr -t string META:state   "$(adr_state   "$adr")"   "$person"
+	addattr -t string META:zip     "$(adr_zip     "$adr")"   "$person"
+	addattr -t string META:country "$(adr_country "$adr")"   "$person"
+}
+
+# populate a person with a vcard's phone data
+function populate_person_telephone {
+	local person="$1"
+	local vcard="$2"
+
+	if test "$(vcard_match_count "$vcard" "TEL")" -eq 1; then
+		addattr -t string META:hphone "$(vcard_tel "$vcard")" "$person"
+	elif test "$(vcard_match_count "$vcard" "TEL")" -gt 1; then
+		echo "Home number:"
+		addattr -t string META:hphone "$(vcard_tel "$vcard")" "$person"
+		echo "Work number:"
+		addattr -t string META:wphone "$(vcard_tel "$vcard")" "$person"
+	fi
+}
+	
+# make a new person file
+function make_person {
+	local file="$1"
+
+	touch "$file"
+	addattr -t mime BEOS:TYPE application/x-person "$file"
+}
+
+
+
+# MISC
+# --------------------------------------
+# takes a trad. comma-delimited address and converts to vcard format
+function infer_comma_address {
+	local addr="$1"
+
+	local addr_split="$(echo "$addr"| tr -d ';'| tr ',' '\n'| sed 's%^ %%')"
+	local city_zip_line="$(echo "$addr_split" | grep '[0-9]$')"
+	local zip="$(echo "$city_zip_line" | awk -F ' ' '{print $NF}')"
+
+	echo ";;${addr_split}" \
+	| sed 's% '"$zip"'%\n'"$zip"'%' \
+	| tr '\n' ';' \
+	| sed 's%\;$%%'
+}
+
+# have the user select a given line (enumerates output, captive)
+# also outputs everything to stderr
+function select_line {
+	local file="$1"
+	local prompt="$2"
+	local line_nums="$3"
+
+	local index=1
+	for line in $line_nums; do
+		printf '%s   ' "$index" >&2
+		cat "$file" \
+		| get_line "$line" \
+		>&2
+		index="$((index + 1))"
+	done
+
+	index="$(select_number 0 $(line_length "$line_nums") "$prompt")"
+	echo "$line_nums" \
+	| get_line "$index"
+}
+
+# have the user choose a number within the given range
+# ouputs everything to stderr except the number
+function select_number {
+	local min=$1
+	local max=$2
+	local prompt="$3"
+
+	printf "$prompt" >&2
+	read response
+
+	if test "$response" -le "$max" -a "$response" -ge "$min"; then
+		echo $response
+	else
+		select_number $min $max "$prompt"
+	fi
+}
+
+# echoes everything piped into it. 
+# useful for taking piped info in a shell function.
+function reade {
+        local stack=""
+        while read input; do
+		stack="$(printf '%s\n%s' "$stack" "$input")"
+	done
+	echo "$stack"
+}
+
+# self-explanatory, no?
+function escape_spaces { sed 's% %\\ %g'; }
+function remove_cr     { tr -d '\r'; }
+function replace_nl    { tr '\n' ' '; }
+function trim          { awk '{$1=$1};1'; }
+
+# does some handy sanitization-work
+function clean {
+	remove_cr \
+	| replace_nl \
+	| trim
+}
+
+# check whether or not a file is an image
+function is_image {
+	local file="$1"
+	file "$file" | grep "image" > /dev/null
+}
+
+# prints the amount of lines a string has
+function line_length {
+	local lines="$1"
+	echo "$lines" \
+	| wc -l
+}
+
+# prints the line at given index
+function get_line {
+	local line_index="$1"
+	awk -v ind="$line_index" 'NR==ind'
+}
+
+# prints lines after given index (inclusive)
+function after_line {
+	local line_index="$1"
+	awk -v ind="$line_index" 'NR>=ind'
+}
+
+# prints lines before given index (inclusive)
+function before_line {
+	local line_index="$1"
+	awk -v ind="$line_index" 'NR<=ind'
+}
+
+# prints a range of lines (inclusive)
+function line_range {
+	local min="$1"
+	local max="$2"
+	awk -v min="$min" -v max="$max" 'min <= NR && NR <= max'
+}
+
+# prints the line index of the next match following a given line index
+function next_match {
+	local file="$1"
+	local after_index="$2"
+	local regex="$3"
+
+	cat "$file" \
+	| after_line "$((after_index+1))" \
+	| grep -n "${regex}" \
+	| head -1 \
+	| awk -v last="$after_index" -F : '{print last + $1}' \
+	| bc
+}
+
+
+
+# INVOCATION
+# --------------------------------------
+function help {
+	echo "usage: $(basename $0) vcard [-h] [-d directory] [-o path] file"
+	echo
+	echo \
+"People files will be created using the data from a vcard. Each vcard defined
+by a given vcf/vcard file have its person file be named after the vcard's
+full-name.
+-o	changes the output person filename
+-d	outputs all people files to a given directory-- useful if a file
+	defines multiple vcards.
+-h	prints this message."
+	exit 1
+}
+
+
+OUTPUT_DIR=""
+OUTPUT_PATH=""
+while getopts ":hd:o:" arg; do
+	case $arg in
+		o) OUTPUT_PATH="$OPTARG";;
+		d)	if test -d "$OPTARG"; then
+				OUTPUT_DIR="$OPTARG"
+			else
+				echo "Directory does not exist." >&2
+				exit 3
+			fi;;
+		h) help;;
+	esac
+done
+
+shift $(($OPTIND - 1))
+remaining_args="$@"
+
+if test -z "$1"; then help
+else VCARD="$1"
+fi
+
+
+vcf_to_persons "$VCARD"

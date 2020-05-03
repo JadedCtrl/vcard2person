@@ -1,0 +1,289 @@
+#!/boot/system/bin/bash
+# --------------------------------------
+# PERSON2VCARD
+# simple script for convertining a person
+# into a vcard.
+# CC0, jadedctrl@teknik.io
+# --------------------------------------
+
+# PERSON INPUT
+# --------------------------------------
+# convert a given vcard file into a person file
+function person_to_vcard {
+	local person="$1"
+
+	if test -n "$OUTPUT_PATH"; then vcard="$OUTPUT_PATH"
+	else vcard="${person}.vcf"
+	fi
+
+	make_vcard "$vcard"
+	populate_vcard_person "$vcard" "$person"
+	finish_vcard "$vcard"
+}
+
+# return a properly-formatted colon-delimited address, and a pretty address for
+# labels. the former on first line, latter on the second.
+function person_address {
+	local person="$person"
+
+	local address="$(catattr -d META:address "$person" 2>/dev/null)"
+	local city="$(catattr    -d META:city    "$person" 2>/dev/null)"
+	local state="$(catattr   -d META:state   "$person" 2>/dev/null)"
+	local zip="$(catattr     -d META:zip     "$person" 2>/dev/null)"
+	local country="$(catattr -d META:country "$person" 2>/dev/null)"
+
+	if test -z "$city" -a -z "$address"; then return 2; fi
+	echo ";;${address};${city};${state};${zip};${country}"
+	echo "${address}, ${city}, ${state} ${zip}, ${country}"
+}
+
+
+# VCARD OUTPUT
+# --------------------------------------
+# create a fresh, blank vcard
+function make_vcard {
+	local vcard="$1"
+	printf 'BEGIN:VCARD\nVERSION:%s\n' "$VERSION" >> "$vcard"
+	addattr -t mime BEOS:TYPE text/x-vcard "$vcard"
+}
+
+# wrap up the current vcard
+function finish_vcard {
+	local vcard="$1"
+	date +"REV:%Y%m%d" >> "$vcard"
+	echo "END:VCARD"   >> "$vcard"
+}
+
+# populate a vcard with a person's attributes
+function populate_vcard_person {
+	local vc="$1"
+	local person="$2"
+	set_vcard_name    "$vc" "$(catattr -d META:name "$person" 2>/dev/null)"
+	set_vcard_org     "$vc" "$(catattr -d META:company "$person" 2>/dev/null)"
+	set_vcard_url     "$vc" "$(catattr -d META:url "$person" 2>/dev/null)"
+	set_vcard_email   "$vc" "$(catattr -d META:email   "$person" 2>/dev/null)"
+	set_vcard_phone   "$vc" "$(catattr -d META:wphone  "$person" 2>/dev/null)" "WORK"
+	set_vcard_phone   "$vc" "$(catattr -d META:hphone  "$person" 2>/dev/null)" "HOME"
+	set_vcard_nick    "$vc" "$(catattr -d META:nickname "$person" 2>/dev/null)"
+	set_vcard_address "$vc" "$(person_address "$person")" "HOME"
+	set_vcard_photo   "$vc" "$person"
+}
+
+# set the name and full-name of a vcard.
+function set_vcard_name {
+	local vcard="$1"
+	local name="$2"
+	simple_set_vcard "$vcard" "N" "$(infer_name "$name")"
+	simple_set_vcard "$vcard" "FN" "$name"
+}
+
+# set the email of a vcard.
+function set_vcard_email {
+	local vcard="$1"
+	local email="$2"
+	simple_set_vcard "$vcard" "EMAIL" "$email"
+}
+
+# set a vcard's url attribute.
+function set_vcard_url {
+	local vcard="$1"
+	local url="$2"
+	simple_set_vcard "$vcard" "URL" "$url"
+}
+
+# set a vcard's organization attribute.
+function set_vcard_org {
+	local vcard="$1"
+	local org="$2"
+	simple_set_vcard "$vcard" "ORG" "$org"
+}
+
+# set a vcard's nick. only for 3.0 and 4.0; 2.1 doesn't support NICKNAME.
+function set_vcard_nick {
+	local vcard="$1"
+	local nick="$2"
+	if test -z "$nick"; then return 2; fi
+
+	if test "$VERSION" = "3.0" -o "$VERSION" = "4.0"; then
+		echo "NICKNAME:${nick}" >> "$vcard"
+	fi
+}
+
+# set a vcard's phone-number of the given type.
+function set_vcard_phone {
+	local vcard="$1"
+	local number="$2"
+	local type="$3"
+	if test -z "$number"; then return 2;    fi
+	if test -z "$type";   then type="HOME"; fi
+
+	local prefix=""
+	if   test "$VERSION" = "2.1"; then prefix="TEL;${type};VOICE:"
+	elif test "$VERSION" = "3.0"; then prefix="TEL;TYPE=${type},VOICE:"
+	elif test "$VERSION" = "4.0"
+		then prefix="TEL;TYPE=${type},voice;VALUE=uri:tel:"
+	fi
+
+	echo "${prefix}${number}" >> "$vcard"
+}
+
+# sets a vcard's address and address label
+# ($addresses is a two-lined string, with the colon-delimited address on top
+#  and the user-friendly comma-delimited on bottom.)
+function set_vcard_address {
+	local vcard="$1"
+	local addresses="$2"
+	local type="$3"
+
+	local address="$(echo "$addresses" | head -1)"
+	local label="$(echo   "$addresses" | tail -1)"
+	local addrstr=""
+	local labelstr=""
+
+	if test "$VERSION" = "2.1" -o "$VERSION" = "3.0"; then
+		labelstr="LABEL;TYPE=${type}:${label}"
+	fi
+
+	if test   "$VERSION" = "2.1"; then
+		addrstr="ADR;${type}:${address}"
+	elif test "$VERSION" = "3.0"; then
+		addrstr="ADR;TYPE=${type}:${address}"
+	elif test "$VERSION" = "4.0"; then
+		addrstr="ADR;TYPE=${type};LABEL=\"${label}\":${address}"
+	fi 
+
+	if test -z "$address" -o -z "$label"; then return 2; fi
+
+	echo "$addrstr"          >> "$vcard"
+	if test -n "$labelstr"; then
+		echo "$labelstr" >> "$vcard"
+	fi
+}
+
+# embeds the given photo into the vcard file (base64), if possible
+function set_vcard_photo {
+	local vcard="$1"
+	local photo="$2"
+	if is_image "$photo"; then ls>/dev/null; else return 2; fi
+
+	local mime="$(file --mime-type "$photo")"
+	local type="$(file "$photo" | awk -F : '{print $1}' | awk '{print $1}')"
+	echo >> "$vcard"
+	if   test "$VERSION" = "2.1"; then
+		echo "PHOTO;${type};ENCODING=BASE64:$(base64 -w 79 "$photo")" \
+		>>"$vcard"
+	elif test "$VERSION" = "3.0"; then
+		echo "PHOTO;TYPE=${type};ENCODING=b:$(base64 -w 79 "$photo")" \
+		>> "$vcard"
+	elif test "$VERSION" = "4.0"; then
+		echo "PHOTO:data:${mime};base64,$(base64 -w 79 "$photo")" \
+		>> "$vcard"
+	fi
+	echo >> "$vcard"
+}
+
+# generic function for setting simple attrs of vcards.
+function simple_set_vcard {
+	local vcard="$1";  local key="$2";  local val="$3"
+	if test -z "$val"; then return 2; fi
+	echo "${key}:${val}" >> "$vcard"
+}
+
+
+
+# MISC
+# --------------------------------------
+# takes a trad. comma-delimited address and converts to vcard format
+function infer_name {
+	local names="$1"
+
+	local inferred_name=""
+	local honorific=""
+	local slot_count=5
+	local name_count="$(echo "$names" | wc -w)"
+	for name in $names; do
+		if is_honorific "$name"; then
+			honorific="$name"
+		else
+			inferred_name="${name};${inferred_name}"
+		fi
+	done
+
+	local i=""
+	if test "$name_count" -ne "$slot_count"; then
+		i="$((slot_count - $name_count - 1))"
+
+		while test "$i" -ne 0; do
+			inferred_name="${inferred_name};"
+			i="$((i - 1))"
+		done
+
+		if test -n "$honorific" -a "$name_count" -lt "$slot_count"; then
+			inferred_name="${inferred_name}${honorific};"
+		fi
+	fi
+
+	echo "$inferred_name"
+}
+
+# ok so this is super language-dependant and is omega cringe
+# you'll probably have to modify this for your locale
+function is_honorific {
+	local name="$1"
+	
+	local honorifics="ms. mrs. mr. s-ro s-ano s-ino"
+	if echo "$honorifics" | grep -i "$name" > /dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# check whether or not a file is an image
+function is_image {
+	local file="$1"
+	file "$file" | grep "image" > /dev/null
+}
+
+
+# INVOCATION
+# --------------------------------------
+function help {
+	echo "usage: $(basename $0) [-h] [-v version] [-o path] person"
+	echo
+	echo \
+"Creates a vcard from the given person file's attributes. By default will
+output to a file of the same name with a .vcf file-extension.
+-o	changes output vcard filename
+-v	specify vcard version: 2.1, 3.0, or 4.0. Defaults to 4.0.
+	a random URL, and use it as the vcard's photo URL.
+-h	print this message."
+	exit 1
+}
+
+
+VERSION="4.0"
+OUTPUT_PATH=""
+while getopts ":hUo:v:" arg; do
+	case $arg in
+		o) OUTPUT_PATH="$OPTARG";;
+		v)	if test "$OPTARG" = "4.0" -o "$OPTARG" = "3.0" \
+			   -o "$OPTARG" = "2.1"; then
+				VERSION="$OPTARG"
+			else
+				echo "Invalid version number." >&2
+				exit 3
+			fi;;
+		h) help;;
+	esac
+done
+
+shift $(($OPTIND - 1))
+remaining_args="$@"
+
+if test -z "$1"; then help
+else PERSON="$1"
+fi
+
+
+person_to_vcard "$PERSON"

@@ -1,0 +1,11 @@
+69a70,71
+> 	## CUSTOM
+> 	set_vcard_bday    "$vc" "$(catattr -d META:birthday "$person" 2>/dev/null)"
+98a101,107
+> }
+> 
+> ## CUSTOM
+> function set_vcard_bday {
+> 	local vcard="$1"
+> 	local bday="$2"
+> 	simple_set_vcard "$vcard" "BDAY" "$bday"

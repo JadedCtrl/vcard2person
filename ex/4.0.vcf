@@ -1,0 +1,20 @@
+BEGIN:VCARD
+VERSION:4.0
+NOTE:A super-valid v4.0 vcard.
+N:Alderson;Darlene;;Ms.;
+FN:Darlene
+Alderson
+ORG:Fun Society, Inc.
+PHOTO;MEDIATYPE=image/jpeg:http://coinsh.red/u/darlene.jpg
+TEL;TYPE=work,voice;VALUE=uri:tel:+1-111-555-1212
+TEL;TYPE=home,voice;VALUE=uri:tel:+1-404-555-1212
+ADR;TYPE=WORK;PREF=1;LABEL="3027 West 12th Street, Coney Island\nNew York City\, NY\nUnited States of America":;;
+3027 West 12th Street, Coney Island;
+New York City;NY;
+1234;
+United States of America
+ADR;TYPE=HOME;LABEL="217 E. Broadway\nNew York City\, NY\nUnited States of America":;;217 E. Broadway;New York City;NY;1234;United States of America
+EMAIL:d0loreshaze@protonmail.com
+REV:20160428T195243Z
+x-qq:21588891
+END:VCARD
