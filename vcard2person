@@ -204,7 +204,11 @@ function populate_person_vcard {
 
 	populate_person_telephone "$person" "$vcard"
 	populate_person_address   "$person" "$vcard"
-	vcard_photo               "$vcard"  "$person"
+
+	if test "$SAVE_VCARD" != "file"; then
+		vcard_photo               "$vcard"  "$person"
+	fi
+	save_vcard_to_person "$vcard" "$person"
 }
 
 # populate a person with a vcard's address data
@@ -242,6 +246,18 @@ function populate_person_telephone {
 		addattr -t string META:hphone "$(vcard_tel "$vcard")" "$person"
 		echo "Work number:"
 		addattr -t string META:wphone "$(vcard_tel "$vcard")" "$person"
+	fi
+}
+
+# save a vcard to a person file (if $SAVE_VCARD set)
+function save_vcard_to_person {
+	local vcard="$1"
+	local person="$2"
+
+	if   test "$SAVE_VCARD" = "attr"; then
+		addattr -t string META:vcard "$(cat "$vcard")" "$person"
+	elif test "$SAVE_VCARD" = "file"; then
+		cat "$vcard" > "$person"
 	fi
 }
 	
@@ -389,7 +405,7 @@ function next_match {
 # INVOCATION
 # --------------------------------------
 function help {
-	echo "usage: $(basename $0) vcard [-h] [-d directory] [-o path] file"
+	echo "usage: $(basename $0) vcard [-h] [-A|a] [-d dir|-o path] file"
 	echo
 	echo \
 "People files will be created using the data from a vcard. Each vcard defined
@@ -398,6 +414,8 @@ full-name.
 -o	changes the output person filename
 -d	outputs all people files to a given directory-- useful if a file
 	defines multiple vcards.
+-A      saves vcard to the 'META:vcard' attribute of the person file
+-a      writes vcard to the person file (disables usage of a photo)
 -h	prints this message."
 	exit 1
 }
@@ -405,7 +423,8 @@ full-name.
 
 OUTPUT_DIR=""
 OUTPUT_PATH=""
-while getopts ":hd:o:" arg; do
+SAVE_VCARD=0
+while getopts ":haAd:o:" arg; do
 	case $arg in
 		o) OUTPUT_PATH="$OPTARG";;
 		d)	if test -d "$OPTARG"; then
@@ -414,6 +433,9 @@ while getopts ":hd:o:" arg; do
 				echo "Directory does not exist." >&2
 				exit 3
 			fi;;
+		A) SAVE_VCARD="attr";;
+		a) SAVE_VCARD="file";;
+
 		h) help;;
 	esac
 done
