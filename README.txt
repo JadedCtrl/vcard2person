@@ -47,5 +47,5 @@ a META:group (X-ANDROID-CUSTOM:vnd.android.cursor.item).
 --------------------
 BORING STUFF
 --------------------
-Author:  Jaidyn Ann <jadedctrl@teknik.io>
+Author:  Jaidyn Ann <jadedctrl@posteo.at>
 License: CC0
